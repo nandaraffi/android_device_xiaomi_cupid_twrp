@@ -7,7 +7,10 @@ env:
   DEVICE: cupid
   DEVICE_NAME: Xiaomi 12
   TWRP_BRANCH: twrp-12.1
-  DEVICE_TREE: yarpiin/twrp_device_xiaomi_cupid
+
+  # YOUR OWN DEVICE TREE
+  DEVICE_TREE: nandaraffi/twrp_device_xiaomi_cupid
+  DEVICE_TREE_BRANCH: main
 
 jobs:
   build:
@@ -18,7 +21,7 @@ jobs:
       - name: Checkout builder repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build dependencies
         shell: bash
         run: |
           set -e
@@ -76,12 +79,13 @@ jobs:
 
           "${HOME}/bin/repo" --version
 
-      - name: Initialize TWRP source
+      - name: Initialize TWRP 12.1
         shell: bash
         run: |
           set -e
 
           mkdir -p "${GITHUB_WORKSPACE}/twrp"
+
           cd "${GITHUB_WORKSPACE}/twrp"
 
           export PATH="${HOME}/bin:${PATH}"
@@ -107,39 +111,67 @@ jobs:
             --no-clone-bundle \
             --no-tags
 
-      - name: Add Xiaomi 12 Cupid TWRP device tree
+      - name: Clone YOUR Xiaomi 12 device tree
         shell: bash
         run: |
           set -e
 
           cd "${GITHUB_WORKSPACE}/twrp"
 
-          rm -rf device/xiaomi/cupid
+          echo "=============================================="
+          echo "CLONING DEVICE TREE"
+          echo "=============================================="
+
+          echo "Repository : https://github.com/${DEVICE_TREE}"
+          echo "Branch     : ${DEVICE_TREE_BRANCH}"
+          echo "Target     : device/xiaomi/${DEVICE}"
+
+          rm -rf "device/xiaomi/${DEVICE}"
 
           git clone \
             --depth=1 \
-            https://github.com/${DEVICE_TREE}.git \
-            device/xiaomi/cupid
-
-          echo "=============================================="
-          echo "CUPID DEVICE TREE"
-          echo "=============================================="
-
-          ls -la device/xiaomi/cupid
+            --branch "${DEVICE_TREE_BRANCH}" \
+            "https://github.com/${DEVICE_TREE}.git" \
+            "device/xiaomi/${DEVICE}"
 
           echo
-          echo "Checking required files..."
+          echo "=============================================="
+          echo "DEVICE TREE CONTENT"
+          echo "=============================================="
 
-          test -f device/xiaomi/cupid/AndroidProducts.mk
-          test -f device/xiaomi/cupid/twrp_cupid.mk
-          test -f device/xiaomi/cupid/device.mk
-          test -f device/xiaomi/cupid/BoardConfig.mk
-          test -f device/xiaomi/cupid/prebuilt/kernel
+          ls -lah "device/xiaomi/${DEVICE}"
+
+      - name: Verify device tree
+        shell: bash
+        run: |
+          set -e
+
+          cd "${GITHUB_WORKSPACE}/twrp"
+
+          DEVICE_PATH="device/xiaomi/${DEVICE}"
+
+          echo "=============================================="
+          echo "VERIFYING DEVICE TREE"
+          echo "=============================================="
+
+          test -f "${DEVICE_PATH}/AndroidProducts.mk"
+          test -f "${DEVICE_PATH}/twrp_cupid.mk"
+          test -f "${DEVICE_PATH}/device.mk"
+          test -f "${DEVICE_PATH}/BoardConfig.mk"
+          test -f "${DEVICE_PATH}/prebuilt/kernel"
+          test -f "${DEVICE_PATH}/modules.load.recovery"
+
+          echo "All required Cupid files found."
 
           echo
-          echo "Device tree OK."
+          echo "Git information:"
+          cd "${DEVICE_PATH}"
 
-      - name: Show build configuration
+          git remote -v
+          git branch --show-current
+          git log -1 --oneline
+
+      - name: Show device configuration
         shell: bash
         run: |
           set -e
@@ -150,24 +182,26 @@ jobs:
           echo "BUILD CONFIGURATION"
           echo "=============================================="
 
-          echo "Device       : ${DEVICE_NAME}"
-          echo "Codename     : ${DEVICE}"
-          echo "SoC          : Snapdragon 8 Gen 1 / SM8450"
-          echo "Platform     : taro"
-          echo "TWRP         : ${TWRP_BRANCH}"
-          echo "Device Tree  : ${DEVICE_TREE}"
-          echo "Kernel       : Prebuilt"
-          echo "Build Host   : $(uname -a)"
+          echo "Device        : ${DEVICE_NAME}"
+          echo "Codename      : ${DEVICE}"
+          echo "TWRP branch   : ${TWRP_BRANCH}"
+          echo "Device tree   : ${DEVICE_TREE}"
+          echo "DT branch     : ${DEVICE_TREE_BRANCH}"
+          echo "Kernel        : Prebuilt"
+
+          echo
+          echo "Runner:"
+          uname -a
 
           echo
           echo "Memory:"
           free -h
 
           echo
-          echo "Disk:"
+          echo "Storage:"
           df -h
 
-      - name: Prepare build environment
+      - name: Prepare TWRP build environment
         shell: bash
         run: |
           set -eo pipefail
@@ -177,9 +211,10 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
 
-          # Do NOT use 'set -u' here.
-          # Android/TWRP envsetup scripts expect some variables
-          # to be undefined while they initialize the environment.
+          # IMPORTANT:
+          # Do not enable 'set -u' before sourcing envsetup.sh.
+          # Android/TWRP envsetup uses variables that may initially
+          # be undefined.
 
           source build/envsetup.sh
 
@@ -187,17 +222,28 @@ jobs:
 
           echo
           echo "=============================================="
-          echo "TARGET CONFIGURATION"
+          echo "TARGET INFORMATION"
           echo "=============================================="
 
+          echo "TARGET_PRODUCT:"
           get_build_var TARGET_PRODUCT
+
+          echo "TARGET_BUILD_VARIANT:"
           get_build_var TARGET_BUILD_VARIANT
-          get_build_var TARGET_ARCH
-          get_build_var TARGET_BOARD_PLATFORM
+
+          echo "PRODUCT_DEVICE:"
           get_build_var PRODUCT_DEVICE
+
+          echo "TARGET_ARCH:"
+          get_build_var TARGET_ARCH
+
+          echo "TARGET_BOARD_PLATFORM:"
+          get_build_var TARGET_BOARD_PLATFORM
+
+          echo "OUT_DIR:"
           get_build_var OUT_DIR
 
-      - name: Build TWRP recoveryimage
+      - name: Build TWRP recovery
         shell: bash
         run: |
           set -eo pipefail
@@ -208,22 +254,26 @@ jobs:
           export LC_ALL=C
 
           source build/envsetup.sh
+
           lunch twrp_cupid-eng
 
           echo
           echo "=============================================="
-          echo "BUILDING TWRP RECOVERY"
+          echo "BUILDING TWRP"
           echo "=============================================="
 
           echo "Device      : Xiaomi 12"
           echo "Codename    : cupid"
-          echo "Platform    : taro"
-          echo "TWRP branch : ${TWRP_BRANCH}"
+          echo "TWRP        : ${TWRP_BRANCH}"
+          echo "Device Tree : ${DEVICE_TREE}"
+          echo "DT Branch   : ${DEVICE_TREE_BRANCH}"
 
           echo
           echo "Starting build..."
 
-          mka recoveryimage ALLOW_MISSING_DEPENDENCIES=true -j2
+          mka recoveryimage \
+            ALLOW_MISSING_DEPENDENCIES=true \
+            -j2
 
       - name: Verify recovery image
         shell: bash
@@ -232,35 +282,36 @@ jobs:
 
           cd "${GITHUB_WORKSPACE}/twrp"
 
-          echo "=============================================="
-          echo "VERIFY RECOVERY IMAGE"
-          echo "=============================================="
-
           RECOVERY="out/target/product/cupid/recovery.img"
+
+          echo "=============================================="
+          echo "VERIFYING BUILD OUTPUT"
+          echo "=============================================="
 
           if [ ! -f "${RECOVERY}" ]; then
             echo "ERROR: recovery.img was not generated."
             echo
-            echo "Output directory:"
+            echo "Available output:"
             ls -lah out/target/product/cupid/ || true
             exit 1
           fi
 
           echo
-          echo "SUCCESS!"
+          echo "BUILD SUCCESSFUL"
           echo
-          echo "Recovery image:"
+
+          echo "Recovery:"
           ls -lh "${RECOVERY}"
 
           echo
-          echo "File information:"
+          echo "File type:"
           file "${RECOVERY}"
 
           echo
           echo "SHA256:"
           sha256sum "${RECOVERY}"
 
-      - name: Generate build information
+      - name: Create build information
         shell: bash
         run: |
           set -e
@@ -270,19 +321,36 @@ jobs:
           mkdir -p build-info
 
           cat > build-info/build-info.txt <<EOF
+          ==========================================
+          Xiaomi 12 Cupid TWRP Build
+          ==========================================
+
           Device       : Xiaomi 12
           Codename     : cupid
-          SoC          : Qualcomm Snapdragon 8 Gen 1
-          Platform     : taro
-          TWRP         : ${TWRP_BRANCH}
-          Device Tree  : ${DEVICE_TREE}
-          Build Date   : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          Runner       : $(uname -a)
 
-          Recovery:
+          TWRP Branch  : ${TWRP_BRANCH}
+
+          Device Tree  : ${DEVICE_TREE}
+          DT Branch    : ${DEVICE_TREE_BRANCH}
+
+          Build Date   : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          ==========================================
+          DEVICE TREE COMMIT
+          ==========================================
+
+          $(cd device/xiaomi/cupid && git log -1 --format='%H%n%ad%n%s' --date=iso)
+
+          ==========================================
+          RECOVERY IMAGE
+          ==========================================
+
           $(ls -lh out/target/product/cupid/recovery.img)
 
-          SHA256:
+          ==========================================
+          SHA256
+          ==========================================
+
           $(sha256sum out/target/product/cupid/recovery.img)
           EOF
 
