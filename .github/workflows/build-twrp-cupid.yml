@@ -1,0 +1,621 @@
+name: Build TWRP 3.7.1 - Xiaomi 12 Cupid - Nndee V2
+
+on:
+  workflow_dispatch:
+
+env:
+  DEVICE: cupid
+  MANIFEST_BRANCH: twrp-12.1
+  DEVICE_BRANCH: lineage-23.2
+  VENDOR_BRANCH: lineage-23.2
+
+  DEVICE_TREE: LineageOS/android_device_xiaomi_cupid
+  COMMON_TREE: LineageOS/android_device_xiaomi_sm8450-common
+  VENDOR_TREE: TheMuppets/proprietary_vendor_xiaomi_cupid
+  VENDOR_COMMON_TREE: TheMuppets/proprietary_vendor_xiaomi_sm8450-common
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT EMPTY USER REPOSITORY
+      # ============================================================
+
+      - name: Checkout TWRP Cupid configuration repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # 2. FREE DISK SPACE
+      # ============================================================
+
+      - name: Free runner disk space
+        run: |
+          set -eux
+
+          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
+          sudo rm -rf /usr/local/lib/android/sdk/cmake || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+
+          df -h
+
+      # ============================================================
+      # 3. DEPENDENCIES
+      # ============================================================
+
+      - name: Install build dependencies
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            adb \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            g++-multilib \
+            gcc-multilib \
+            git \
+            gnupg \
+            gperf \
+            imagemagick \
+            lib32ncurses5-dev \
+            lib32readline-dev \
+            lib32z1-dev \
+            libc6-dev-i386 \
+            libelf-dev \
+            liblz4-tool \
+            libncurses5 \
+            libncurses5-dev \
+            libssl-dev \
+            libxml2 \
+            libxml2-utils \
+            lzop \
+            pngcrush \
+            python3 \
+            python3-pip \
+            rsync \
+            schedtool \
+            squashfs-tools \
+            unzip \
+            xsltproc \
+            zip \
+            zlib1g-dev
+
+          sudo ln -sf /usr/bin/python3 /usr/local/bin/python
+
+      # ============================================================
+      # 4. INSTALL REPO
+      # ============================================================
+
+      - name: Install repo tool
+        run: |
+          set -eux
+
+          mkdir -p "${HOME}/bin"
+
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "${HOME}/bin/repo"
+
+          chmod +x "${HOME}/bin/repo"
+
+          echo "${HOME}/bin" >> "${GITHUB_PATH}"
+
+          repo --version
+
+      # ============================================================
+      # 5. INITIALIZE TWRP 12.1
+      # ============================================================
+
+      - name: Initialize TWRP source
+        run: |
+          set -eux
+
+          mkdir -p "${GITHUB_WORKSPACE}/twrp"
+          cd "${GITHUB_WORKSPACE}/twrp"
+
+          repo init \
+            --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b "${MANIFEST_BRANCH}"
+
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      # ============================================================
+      # 6. LOCAL MANIFEST
+      # ============================================================
+
+      - name: Add Xiaomi 12 Cupid manifest
+        working-directory: twrp
+        run: |
+          set -eux
+
+          mkdir -p .repo/local_manifests
+
+          cat > .repo/local_manifests/cupid.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+
+            <!-- Xiaomi 12 device tree -->
+            <project
+              name="LineageOS/android_device_xiaomi_cupid"
+              path="device/xiaomi/cupid"
+              remote="github"
+              revision="lineage-23.2"
+              clone-depth="1" />
+
+            <!-- Xiaomi SM8450 common device tree -->
+            <project
+              name="LineageOS/android_device_xiaomi_sm8450-common"
+              path="device/xiaomi/sm8450-common"
+              remote="github"
+              revision="lineage-23.2"
+              clone-depth="1" />
+
+            <!-- Xiaomi Cupid proprietary vendor -->
+            <project
+              name="TheMuppets/proprietary_vendor_xiaomi_cupid"
+              path="vendor/xiaomi/cupid"
+              remote="github"
+              revision="lineage-23.2"
+              clone-depth="1" />
+
+            <!-- Xiaomi SM8450 common proprietary vendor -->
+            <project
+              name="TheMuppets/proprietary_vendor_xiaomi_sm8450-common"
+              path="vendor/xiaomi/sm8450-common"
+              remote="github"
+              revision="lineage-23.2"
+              clone-depth="1" />
+
+          </manifest>
+          EOF
+
+          cat .repo/local_manifests/cupid.xml
+
+      # ============================================================
+      # 7. SYNC SOURCE
+      # ============================================================
+
+      - name: Sync TWRP source and Xiaomi trees
+        working-directory: twrp
+        run: |
+          set -eux
+
+          repo sync \
+            -c \
+            --force-sync \
+            --no-clone-bundle \
+            --no-tags \
+            --optimized-fetch \
+            --prune \
+            -j2
+
+      # ============================================================
+      # 8. COPY USER REPOSITORY CONTENT
+      # ============================================================
+
+      - name: Install custom Cupid TWRP configuration
+        run: |
+          set -eux
+
+          mkdir -p twrp/device/xiaomi/cupid
+
+          if [ -d device/xiaomi/cupid ]; then
+            rsync -a \
+              --exclude ".git" \
+              device/xiaomi/cupid/ \
+              twrp/device/xiaomi/cupid/
+          fi
+
+      # ============================================================
+      # 9. CONVERT LINEAGE PRODUCT TO TWRP PRODUCT
+      # ============================================================
+
+      - name: Prepare TWRP product
+        working-directory: twrp
+        run: |
+          set -eux
+
+          cd device/xiaomi/cupid
+
+          echo "=== Cupid device tree ==="
+          ls -la
+
+          # LineageOS normally uses lineage_cupid.mk.
+          # TWRP 12.1 expects the device product to use the twrp prefix.
+          if [ -f lineage_cupid.mk ] && [ ! -f twrp_cupid.mk ]; then
+            cp lineage_cupid.mk twrp_cupid.mk
+          fi
+
+          # Replace product references.
+          if [ -f twrp_cupid.mk ]; then
+            sed -i \
+              -e 's/lineage_cupid/twrp_cupid/g' \
+              -e 's/PRODUCT_NAME := lineage_cupid/PRODUCT_NAME := twrp_cupid/g' \
+              twrp_cupid.mk
+          fi
+
+          # Replace AndroidProducts.mk with a TWRP product.
+          cat > AndroidProducts.mk <<'EOF'
+          PRODUCT_MAKEFILES := \
+              $(LOCAL_DIR)/twrp_cupid.mk
+
+          COMMON_LUNCH_CHOICES := \
+              twrp_cupid-eng
+          EOF
+
+          echo
+          echo "=== AndroidProducts.mk ==="
+          cat AndroidProducts.mk
+
+          echo
+          echo "=== twrp_cupid.mk ==="
+          cat twrp_cupid.mk
+
+      # ============================================================
+      # 10. TWRP-SPECIFIC DEVICE SETTINGS
+      # ============================================================
+
+      - name: Apply TWRP Cupid configuration
+        working-directory: twrp
+        run: |
+          set -eux
+
+          DEVICE_PATH="device/xiaomi/cupid"
+
+          cat >> "${DEVICE_PATH}/BoardConfig.mk" <<'EOF'
+
+          # ==========================================================
+          # TWRP / RECOVERY
+          # ==========================================================
+
+          TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/rootdir/etc/fstab.qcom
+
+          TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
+
+          TARGET_USERIMAGES_USE_EXT4 := true
+          TARGET_USERIMAGES_USE_F2FS := true
+
+          TW_THEME := portrait_hdpi
+
+          TW_SCREEN_BLANK_ON_BOOT := true
+
+          TW_INCLUDE_FASTBOOTD := true
+
+          TW_INCLUDE_REPACKTOOLS := true
+
+          TW_INCLUDE_NTFS_3G := true
+
+          TW_INCLUDE_FUSE_EXFAT := true
+
+          TW_NO_USB_STORAGE := true
+
+          TW_EXTRA_LANGUAGES := true
+
+          # A/B
+          TW_INCLUDE_REPACKTOOLS := true
+
+          # Crypto / Android 12+
+          TW_USE_TOOLBOX := true
+
+          # USB
+          TW_EXCLUDE_DEFAULT_USB_INIT := true
+
+          EOF
+
+          # ========================================================
+          # Recovery fstab
+          # ========================================================
+
+          mkdir -p "${DEVICE_PATH}/rootdir/etc"
+
+          if [ ! -f "${DEVICE_PATH}/rootdir/etc/fstab.qcom" ]; then
+
+            cat > "${DEVICE_PATH}/rootdir/etc/fstab.qcom" <<'EOF'
+          # Android 12+ Xiaomi 12 Cupid recovery fstab
+          # Device-specific entries are inherited from vendor fstab
+          # when available.
+
+          /dev/block/bootdevice/by-name/system        /system        ext4    ro,barrier=1    wait,slotselect,avb=vbmeta_system
+          /dev/block/bootdevice/by-name/vendor        /vendor        ext4    ro,barrier=1    wait,slotselect,avb=vbmeta
+          /dev/block/bootdevice/by-name/product       /product       ext4    ro,barrier=1    wait,slotselect,avb=vbmeta_system
+          /dev/block/bootdevice/by-name/odm           /odm           ext4    ro,barrier=1    wait,slotselect,avb=vbmeta
+          /dev/block/bootdevice/by-name/userdata      /data          f2fs    noatime,nosuid,nodev,discard    wait,check,formattable,latemount,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized,quota
+          /dev/block/bootdevice/by-name/metadata      /metadata      ext4    noatime,nosuid,nodev,discard    wait,formattable
+          EOF
+
+          fi
+
+      # ============================================================
+      # 11. USB / OTG MODULE DISCOVERY
+      # ============================================================
+
+      - name: Configure Cupid USB OTG modules
+        working-directory: twrp
+        run: |
+          set -eux
+
+          DEVICE_PATH="device/xiaomi/cupid"
+
+          mkdir -p "${DEVICE_PATH}/recovery/root/system/etc"
+
+          cat > "${DEVICE_PATH}/recovery/root/system/etc/otg-modules.list" <<'EOF'
+          dwc3-msm.ko
+          phy-msm-ssusb-qmp.ko
+          phy-msm-snps-hs.ko
+          fsa4480-i2c.ko
+          ucsi_glink.ko
+          pmic_glink.ko
+          repeater-i2c-eusb2.ko
+          redriver.ko
+          EOF
+
+          echo "OTG module candidates:"
+          cat "${DEVICE_PATH}/recovery/root/system/etc/otg-modules.list"
+
+          # Generate a recovery init script which only attempts to
+          # load modules that actually exist in the recovery/vendor
+          # module locations.
+          mkdir -p "${DEVICE_PATH}/recovery/root/system/bin"
+
+          cat > "${DEVICE_PATH}/recovery/root/system/bin/load-cupid-otg.sh" <<'EOF'
+          #!/system/bin/sh
+
+          MODDIRS="
+          /vendor_dlkm/lib/modules
+          /vendor/lib/modules
+          /lib/modules
+          /system/lib/modules
+          /system/vendor_dlkm/lib/modules
+          "
+
+          MODULES="
+          dwc3-msm.ko
+          phy-msm-ssusb-qmp.ko
+          phy-msm-snps-hs.ko
+          fsa4480-i2c.ko
+          ucsi_glink.ko
+          pmic_glink.ko
+          repeater-i2c-eusb2.ko
+          redriver.ko
+          "
+
+          for mod in $MODULES; do
+            for dir in $MODDIRS; do
+              if [ -f "$dir/$mod" ]; then
+                insmod "$dir/$mod" 2>/dev/null || true
+                break
+              fi
+            done
+          done
+
+          exit 0
+          EOF
+
+          chmod 0755 \
+            "${DEVICE_PATH}/recovery/root/system/bin/load-cupid-otg.sh"
+
+      # ============================================================
+      # 12. ADD RECOVERY INIT HOOK
+      # ============================================================
+
+      - name: Add OTG recovery init hook
+        working-directory: twrp
+        run: |
+          set -eux
+
+          DEVICE_PATH="device/xiaomi/cupid"
+
+          mkdir -p "${DEVICE_PATH}/recovery/root"
+
+          cat > "${DEVICE_PATH}/recovery/root/init.cupid.recovery.rc" <<'EOF'
+          on post-fs
+              exec u:r:su:s0 root root -- /system/bin/load-cupid-otg.sh
+
+          on boot
+              exec u:r:su:s0 root root -- /system/bin/load-cupid-otg.sh
+          EOF
+
+      # ============================================================
+      # 13. COPY/DETECT VENDOR RECOVERY FSTAB
+      # ============================================================
+
+      - name: Detect vendor fstab and recovery configuration
+        working-directory: twrp
+        run: |
+          set -eux
+
+          echo "Searching for Cupid fstab files..."
+
+          find vendor/xiaomi/cupid \
+               vendor/xiaomi/sm8450-common \
+               device/xiaomi/cupid \
+               device/xiaomi/sm8450-common \
+               -type f \
+               \( -name "fstab*" -o -name "*fstab*" \) \
+               2>/dev/null | sort | head -100 || true
+
+          echo
+          echo "Searching USB module lists..."
+
+          find vendor/xiaomi/cupid \
+               vendor/xiaomi/sm8450-common \
+               device/xiaomi/cupid \
+               device/xiaomi/sm8450-common \
+               -type f \
+               \( -name "modules.load*" -o -name "*modules*" \) \
+               2>/dev/null | sort | head -100 || true
+
+      # ============================================================
+      # 14. VALIDATE REQUIRED TREES
+      # ============================================================
+
+      - name: Validate Cupid source tree
+        working-directory: twrp
+        run: |
+          set -eux
+
+          test -d device/xiaomi/cupid
+          test -d device/xiaomi/sm8450-common
+          test -d vendor/xiaomi/cupid
+          test -d vendor/xiaomi/sm8450-common
+
+          test -f device/xiaomi/cupid/BoardConfig.mk
+          test -f device/xiaomi/cupid/AndroidProducts.mk
+          test -f device/xiaomi/cupid/twrp_cupid.mk
+
+          echo
+          echo "=========================================="
+          echo "CUPID TREE VALIDATION"
+          echo "=========================================="
+          echo "Device tree       : OK"
+          echo "SM8450 common     : OK"
+          echo "Cupid vendor      : OK"
+          echo "Vendor common     : OK"
+          echo "TWRP product      : OK"
+          echo "=========================================="
+
+      # ============================================================
+      # 15. BUILD ENVIRONMENT
+      # ============================================================
+
+      - name: Configure ccache
+        run: |
+          set -eux
+
+          ccache --max-size=8G
+
+          echo "USE_CCACHE=1" >> "${GITHUB_ENV}"
+          echo "CCACHE_EXEC=$(command -v ccache)" >> "${GITHUB_ENV}"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: twrp-cupid-${{ env.MANIFEST_BRANCH }}-${{ github.run_id }}
+          restore-keys: |
+            twrp-cupid-${{ env.MANIFEST_BRANCH }}-
+
+      # ============================================================
+      # 16. BUILD
+      # ============================================================
+
+      - name: Build TWRP recovery
+        working-directory: twrp
+        env:
+          ALLOW_MISSING_DEPENDENCIES: true
+          LC_ALL: C
+        run: |
+          set -eux
+
+          echo "============================================"
+          echo "BUILDING TWRP - XIAOMI 12 CUPID"
+          echo "============================================"
+
+          free -h
+          df -h
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+
+          source build/envsetup.sh
+
+          echo
+          echo "Available Cupid lunches:"
+          lunch twrp_cupid-eng
+
+          echo
+          echo "============================================"
+          echo "TWRP VERSION"
+          echo "============================================"
+
+          grep -R \
+            "TW_VERSION_STR" \
+            bootable/recovery \
+            vendor/twrp \
+            2>/dev/null | head -20 || true
+
+          echo
+          echo "============================================"
+          echo "BUILD"
+          echo "============================================"
+
+          mka recoveryimage -j2
+
+      # ============================================================
+      # 17. BRANDING
+      # ============================================================
+
+      - name: Apply Nndee V2 branding
+        working-directory: twrp
+        run: |
+          set -eux
+
+          mkdir -p "${GITHUB_WORKSPACE}/output"
+
+          if [ -f out/target/product/cupid/recovery.img ]; then
+            cp \
+              out/target/product/cupid/recovery.img \
+              "${GITHUB_WORKSPACE}/output/recovery.img"
+          fi
+
+          echo "TWRP [source version] - Nndee V2" \
+            > "${GITHUB_WORKSPACE}/output/BUILD_NAME.txt"
+
+          echo "Xiaomi 12 / cupid" \
+            >> "${GITHUB_WORKSPACE}/output/BUILD_NAME.txt"
+
+          echo "Android target: TWRP 12.1 / A12 base" \
+            >> "${GITHUB_WORKSPACE}/output/BUILD_NAME.txt"
+
+      # ============================================================
+      # 18. VERIFY OUTPUT
+      # ============================================================
+
+      - name: Verify recovery image
+        run: |
+          set -eux
+
+          test -f output/recovery.img
+
+          ls -lh output/recovery.img
+
+          file output/recovery.img || true
+
+          sha256sum output/recovery.img \
+            | tee output/recovery.img.sha256
+
+          echo
+          echo "============================================"
+          echo "BUILD SUCCESS"
+          echo "============================================"
+          cat output/BUILD_NAME.txt
+          echo
+          cat output/recovery.img.sha256
+          echo "============================================"
+
+      # ============================================================
+      # 19. UPLOAD ARTIFACT
+      # ============================================================
+
+      - name: Upload TWRP recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-cupid-Nndee-V2
+          path: |
+            output/recovery.img
+            output/recovery.img.sha256
+            output/BUILD_NAME.txt
+          if-no-files-found: error
+          retention-days: 30
